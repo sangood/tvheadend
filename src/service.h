@@ -383,9 +383,18 @@ typedef struct service {
   // Errors
 #define TSS_NO_DESCRAMBLER   0x10000
 #define TSS_NO_ACCESS        0x20000
+#define TSS_TIMEOUT          0x40000
 
 #define TSS_ERRORS           0xffff0000
 
+
+  /**
+   *
+   */
+  int s_streaming_live;
+
+  // Live status
+#define TSS_LIVE             0x01
 
   /**
    * For simple streaming sources (such as video4linux) keeping
@@ -439,6 +448,7 @@ void service_init(void);
 void service_done(void);
 
 int service_start(service_t *t, int instance);
+void service_stop(service_t *t);
 
 void service_build_filter(service_t *t);
 

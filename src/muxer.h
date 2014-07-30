@@ -24,6 +24,8 @@
 #define MC_REWRITE_PAT 0x0001
 #define MC_REWRITE_PMT 0x0002
 
+#define MC_IS_EOS_ERROR(e) ((e) == EPIPE || (e) == ECONNRESET)
+
 typedef enum {
   MC_UNKNOWN     = 0,
   MC_MATROSKA    = 1,
@@ -81,6 +83,7 @@ typedef struct muxer {
 			       void *);
   int         (*m_add_marker) (struct muxer *);                         // Add a marker (or chapter)
 
+  int                    m_eos;        // End of stream
   int                    m_errors;     // Number of errors
   muxer_container_type_t m_container;  // The type of the container
   muxer_config_t         m_config;     // general configuration

@@ -30,7 +30,6 @@
 #include "service_mapper.h"
 #include "streaming.h"
 #include "service.h"
-#include "plumbing/tsfix.h"
 #include "api.h"
 
 static service_mapper_status_t service_mapper_stat; 
@@ -51,7 +50,7 @@ service_mapper_init ( void )
 {
   TAILQ_INIT(&service_mapper_queue);
   pthread_cond_init(&service_mapper_cond, NULL);
-  tvhthread_create(&service_mapper_tid, NULL, service_mapper_thread, NULL, 0);
+  tvhthread_create(&service_mapper_tid, NULL, service_mapper_thread, NULL);
 }
 
 void

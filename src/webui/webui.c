@@ -339,7 +339,8 @@ http_stream_run(http_connection_t *hc, streaming_queue_t *sq,
     streaming_msg_free(sm);
 
     if(mux->m_errors) {
-      tvhlog(LOG_WARNING, "webui",  "Stop streaming %s, muxer reported errors", hc->hc_url_orig);
+      if (!mux->m_eos)
+        tvhlog(LOG_WARNING, "webui",  "Stop streaming %s, muxer reported errors", hc->hc_url_orig);
       run = 0;
     }
   }
@@ -1028,6 +1029,9 @@ static int
 page_play(http_connection_t *hc, const char *remain, void *opaque)
 {
   char *playlist;
+
+  if(remain == NULL)
+    return 404;
 
   playlist = http_arg_get(&hc->hc_req_args, "playlist");
   if (playlist) {

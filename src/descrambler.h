@@ -51,6 +51,7 @@ typedef struct th_descrambler {
 
   void (*td_stop)       (struct th_descrambler *d);
   void (*td_caid_change)(struct th_descrambler *d);
+  int  (*td_ecm_reset)  (struct th_descrambler *d);
 
 } th_descrambler_t;
 
@@ -60,7 +61,9 @@ typedef struct th_descrambler_runtime {
   uint32_t dr_key_first:1;
   uint8_t  dr_key_index;
   uint8_t  dr_key_valid;
+  uint8_t  dr_ecm_valid;
   time_t   dr_key_start;
+  time_t   dr_key_timestamp[2];
   time_t   dr_ecm_start;
   time_t   dr_ecm_key_time;
   sbuf_t   dr_buf;

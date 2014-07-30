@@ -142,14 +142,15 @@ struct mpegts_table
    */
   int mt_flags;
 
-#define MT_CRC      0x01
-#define MT_FULL     0x02
-#define MT_QUICKREQ 0x04
-#define MT_RECORD   0x08
-#define MT_SKIPSUBS 0x10
-#define MT_SCANSUBS 0x20
-#define MT_FAST     0x40
-#define MT_SLOW     0x80
+#define MT_CRC      0x0001
+#define MT_FULL     0x0002
+#define MT_QUICKREQ 0x0004
+#define MT_RECORD   0x0008
+#define MT_SKIPSUBS 0x0010
+#define MT_SCANSUBS 0x0020
+#define MT_FAST     0x0040
+#define MT_SLOW     0x0080
+#define MT_DEFER    0x0100
 
   /**
    * Cycle queue
@@ -164,6 +165,7 @@ struct mpegts_table
    */
 
   LIST_ENTRY(mpegts_table) mt_link;
+  LIST_ENTRY(mpegts_table) mt_defer_link;
   mpegts_mux_t *mt_mux;
 
   char *mt_name;
@@ -174,8 +176,12 @@ struct mpegts_table
   RB_HEAD(,mpegts_table_state) mt_state;
   int mt_complete;
   int mt_incomplete;
-  int mt_finished;
-  int mt_subscribed;
+  uint8_t mt_finished;
+  uint8_t mt_subscribed;
+  uint8_t mt_defer_cmd;
+
+#define MT_DEFER_OPEN_PID  1
+#define MT_DEFER_CLOSE_PID 2
 
   int mt_count;
 
@@ -299,6 +305,21 @@ typedef enum mpegts_mux_scan_result
   MM_SCAN_FAIL
 } mpegts_mux_scan_result_t;
 
+enum mpegts_mux_epg_flag
+{
+  MM_EPG_DISABLE,
+  MM_EPG_ENABLE,
+  MM_EPG_FORCE,
+  MM_EPG_FORCE_EIT,
+  MM_EPG_FORCE_UK_FREESAT,
+  MM_EPG_FORCE_UK_FREEVIEW,
+  MM_EPG_FORCE_VIASAT_BALTIC,
+  MM_EPG_FORCE_OPENTV_SKY_UK,
+  MM_EPG_FORCE_OPENTV_SKY_ITALIA,
+  MM_EPG_FORCE_OPENTV_SKY_AUSAT,
+};
+#define MM_EPG_LAST MM_EPG_FORCE_OPENTV_SKY_AUSAT
+
 /* Multiplex */
 struct mpegts_mux
 {
@@ -357,6 +378,8 @@ struct mpegts_mux
 
   int                         mm_num_tables;
   LIST_HEAD(, mpegts_table)   mm_tables;
+  LIST_HEAD(, mpegts_table)   mm_defer_tables;
+  pthread_mutex_t             mm_tables_lock;
   TAILQ_HEAD(, mpegts_table)  mm_table_queue;
 
   LIST_HEAD(, caid)           mm_descrambler_caids;
@@ -377,12 +400,14 @@ struct mpegts_mux
   void (*mm_open_table)       (mpegts_mux_t*,mpegts_table_t*,int subscribe);
   void (*mm_close_table)      (mpegts_mux_t*,mpegts_table_t*);
   void (*mm_create_instances) (mpegts_mux_t*);
+  int  (*mm_is_epg)           (mpegts_mux_t*);
 
   /*
    * Configuration
    */
   char *mm_crid_authority;
   int   mm_enabled;
+  int   mm_epg;
   char *mm_charset;
 };
  
@@ -495,6 +520,8 @@ struct mpegts_input
 
   int mi_priority;
 
+  int mi_ota_epg;
+
   LIST_ENTRY(mpegts_input) mi_global_link;
 
   mpegts_network_link_list_t mi_networks;
@@ -511,7 +538,8 @@ struct mpegts_input
    * Input processing
    */
 
-  int mi_running;
+  uint8_t mi_running;
+  uint8_t mi_live;
   time_t mi_last_dispatch;
 
   /* Data input */
@@ -538,7 +566,7 @@ struct mpegts_input
   /*
    * Functions
    */
-  int  (*mi_is_enabled)     (mpegts_input_t*, mpegts_mux_t *mm);
+  int  (*mi_is_enabled)     (mpegts_input_t*, mpegts_mux_t *mm, const char *reason);
   void (*mi_enabled_updated)(mpegts_input_t*);
   void (*mi_display_name)   (mpegts_input_t*, char *buf, size_t len);
   int  (*mi_is_free)        (mpegts_input_t*);
@@ -607,6 +635,8 @@ void mpegts_input_close_service ( mpegts_input_t *mi, mpegts_service_t *s );
 void mpegts_input_status_timer ( void *p );
 
 int mpegts_input_grace ( mpegts_input_t * mi, mpegts_mux_t * mm );
+
+int mpegts_input_is_enabled ( mpegts_input_t * mi, mpegts_mux_t *mm, const char *reason );
 
 /* TODO: exposing these class methods here is a bit of a hack */
 const void *mpegts_input_class_network_get  ( void *o );
@@ -697,6 +727,8 @@ void mpegts_mux_unsubscribe_by_name(mpegts_mux_t *mm, const char *name);
 
 void mpegts_mux_scan_done ( mpegts_mux_t *mm, const char *buf, int res );
 
+void mpegts_mux_nice_name( mpegts_mux_t *mm, char *buf, size_t len );
+
 mpegts_pid_t *mpegts_mux_find_pid_(mpegts_mux_t *mm, int pid, int create);
 
 static inline mpegts_pid_t *
@@ -737,8 +769,11 @@ void mpegts_table_release_
 static inline void mpegts_table_release
   (mpegts_table_t *mt)
 {
+  assert(mt->mt_refcount > 0);
   if(--mt->mt_refcount == 0) mpegts_table_release_(mt);
 }
+int mpegts_table_type
+  ( mpegts_table_t *mt );
 mpegts_table_t *mpegts_table_add
   (mpegts_mux_t *mm, int tableid, int mask,
    mpegts_table_callback_t callback, void *opaque,
@@ -761,6 +796,9 @@ mpegts_service_t *mpegts_service_create0
 
 mpegts_service_t *mpegts_service_find 
   ( mpegts_mux_t *mm, uint16_t sid, uint16_t pmt_pid, int create, int *save );
+
+#define mpegts_service_find_by_uuid(u)\
+  idnode_find(u, &mpegts_service_class)
 
 void mpegts_service_delete ( service_t *s, int delconf );
 

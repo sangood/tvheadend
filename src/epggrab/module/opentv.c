@@ -504,8 +504,7 @@ opentv_bat_callback
   /* Register */
   if (!ota) {
     sta->os_ota = ota
-      = epggrab_ota_register((epggrab_module_ota_t*)mod, mt->mt_mux,
-                             1200, 3600);
+      = epggrab_ota_register((epggrab_module_ota_t*)mod, NULL, mt->mt_mux);
   }
 
   /* Complete */
@@ -539,11 +538,12 @@ opentv_bat_callback
  * Module callbacks
  * ***********************************************************************/
 
-static void _opentv_start
-  ( epggrab_module_ota_t *m, mpegts_mux_t *mm )
+static int _opentv_start
+  ( epggrab_ota_map_t *map, mpegts_mux_t *mm )
 {
   int *t;
-  opentv_module_t *mod = (opentv_module_t*)m;
+  opentv_module_t *mod = (opentv_module_t*)map->om_module;
+  epggrab_module_ota_t *m = map->om_module;
   opentv_status_t *sta = NULL;
   mpegts_table_t *mt;
   static struct mpegts_table_mux_cb bat_desc[] = {
@@ -552,8 +552,8 @@ static void _opentv_start
   };
 
   /* Ignore */
-  if (!m->enabled)  return;
-  if (mod->tsid != mm->mm_tsid) return;
+  if (!m->enabled && !map->om_forced) return -1;
+  if (mod->tsid != mm->mm_tsid) return -1;
 
   /* Install tables */
   tvhdebug(mod->id, "install table handlers");
@@ -585,6 +585,7 @@ static void _opentv_start
 
   // Note: we process the data in a serial fashion, first we do channels
   //       then we do titles, then we do summaries
+  return 0;
 }
 
 /* ************************************************************************
@@ -685,12 +686,25 @@ static void _opentv_dict_load ( htsmsg_t *m )
   htsmsg_destroy(m);
 }
 
-static void _opentv_done( epggrab_module_ota_t *m )
+static void _opentv_done( void *m )
 {
   opentv_module_t *mod = (opentv_module_t *)m;
   free(mod->channel);
   free(mod->title);
   free(mod->summary);
+}
+
+static int _opentv_tune
+  ( epggrab_ota_map_t *map, epggrab_ota_mux_t *om, mpegts_mux_t *mm )
+{
+  epggrab_module_ota_t *m = map->om_module;
+  opentv_module_t *mod = (opentv_module_t*)m;
+
+  /* Ignore */
+  if (!m->enabled) return 0;
+  if (mod->tsid != mm->mm_tsid) return 0;
+
+  return 1;
 }
 
 static int _opentv_prov_load_one ( const char *id, htsmsg_t *m )
@@ -702,6 +716,11 @@ static int _opentv_prov_load_one ( const char *id, htsmsg_t *m )
   opentv_dict_t *dict;
   opentv_genre_t *genre;
   opentv_module_t *mod;
+  static epggrab_ota_module_ops_t ops = {
+    .start = _opentv_start,
+    .done  = _opentv_done,
+    .tune =  _opentv_tune,
+  };
 
   /* Check config */
   if (!(name = htsmsg_get_str(m, "name"))) return -1;
@@ -731,9 +750,7 @@ static int _opentv_prov_load_one ( const char *id, htsmsg_t *m )
   sprintf(nbuf, "OpenTV: %s", name);
   mod = (opentv_module_t*)
     epggrab_module_ota_create(calloc(1, sizeof(opentv_module_t)),
-                              ibuf, nbuf, 2,
-                              _opentv_start, NULL,
-                              _opentv_done, NULL);
+                              ibuf, nbuf, 2, &ops, NULL);
   
   /* Add provider details */
   mod->dict     = dict;

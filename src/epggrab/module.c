@@ -20,6 +20,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -107,8 +108,7 @@ epggrab_module_t *epggrab_module_create
 /*
  * Run the parse
  */
-void epggrab_module_parse
-  ( void *m, htsmsg_t *data )
+void epggrab_module_parse( void *m, htsmsg_t *data )
 {
   time_t tm1, tm2;
   int save = 0;
@@ -242,6 +242,13 @@ void epggrab_module_channels_load ( epggrab_module_t *mod )
  * Internal module routines
  * *************************************************************************/
 
+static void
+epggrab_module_int_done( void *m )
+{
+  epggrab_module_int_t *mod = m;
+  free((char *)mod->path);
+}
+
 epggrab_module_int_t *epggrab_module_int_create
   ( epggrab_module_int_t *skel,
     const char *id, const char *name, int priority,
@@ -264,6 +271,7 @@ epggrab_module_int_t *epggrab_module_int_create
   skel->grab     = grab  ?: epggrab_module_grab_spawn;
   skel->trans    = trans ?: epggrab_module_trans_xml;
   skel->parse    = parse;
+  skel->done     = epggrab_module_int_done;
 
   return skel;
 }
@@ -357,11 +365,36 @@ static void *_epggrab_socket_thread ( void *p )
 }
 
 /*
+ * Shutdown socket module
+ */
+static void
+epggrab_module_done_socket( void *m )
+{
+  epggrab_module_ext_t *mod = (epggrab_module_ext_t*)m;
+  int sock;
+
+  assert(mod->type == EPGGRAB_EXT);
+  mod->enabled = 0;
+  sock = mod->sock;
+  mod->sock = 0;
+  shutdown(sock, SHUT_RDWR);
+  close(sock);
+  if (mod->tid) {
+    pthread_kill(mod->tid, SIGTERM);
+    pthread_join(mod->tid, NULL);
+  }
+  mod->tid = 0;
+  if (mod->path)
+    unlink(mod->path);
+  epggrab_module_int_done(mod);
+}
+
+/*
  * Enable socket module
  */
-int epggrab_module_enable_socket ( void *m, uint8_t e )
+static int
+epggrab_module_enable_socket ( void *m, uint8_t e )
 {
-  pthread_t      tid;
   pthread_attr_t tattr;
   struct sockaddr_un addr;
   epggrab_module_ext_t *mod = (epggrab_module_ext_t*)m;
@@ -372,10 +405,7 @@ int epggrab_module_enable_socket ( void *m, uint8_t e )
 
   /* Disable */
   if (!e) {
-    shutdown(mod->sock, SHUT_RDWR);
-    close(mod->sock);
-    unlink(mod->path);
-    mod->sock = 0;
+    epggrab_module_done_socket(m);
   
   /* Enable */
   } else {
@@ -405,10 +435,9 @@ int epggrab_module_enable_socket ( void *m, uint8_t e )
 
     tvhlog(LOG_DEBUG, mod->id, "starting socket thread");
     pthread_attr_init(&tattr);
-    pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_DETACHED);
-    tvhthread_create(&tid, &tattr, _epggrab_socket_thread, mod, 1);
+    mod->enabled = 1;
+    tvhthread_create(&mod->tid, &tattr, _epggrab_socket_thread, mod);
   }
-  mod->enabled = e;
   return 1;
 }
 
@@ -437,6 +466,7 @@ epggrab_module_ext_t *epggrab_module_ext_create
   /* Local */
   skel->type   = EPGGRAB_EXT;
   skel->enable = epggrab_module_enable_socket;
+  skel->done   = epggrab_module_done_socket;
 
   return skel;
 }
@@ -448,10 +478,7 @@ epggrab_module_ext_t *epggrab_module_ext_create
 epggrab_module_ota_t *epggrab_module_ota_create
   ( epggrab_module_ota_t *skel,
     const char *id, const char *name, int priority,
-    void (*start) (epggrab_module_ota_t*m,
-                   struct mpegts_mux *dm),
-    int (*enable) (void *m, uint8_t e ),
-    void (*done) (epggrab_module_ota_t *m),
+    epggrab_ota_module_ops_t *ops,
     epggrab_channel_tree_t *channels )
 {
   if (!skel) skel = calloc(1, sizeof(epggrab_module_ota_t));
@@ -461,9 +488,10 @@ epggrab_module_ota_t *epggrab_module_ota_create
 
   /* Setup */
   skel->type   = EPGGRAB_OTA;
-  skel->enable = enable;
-  skel->start  = start;
-  skel->done   = done;
+  skel->enable = ops->enable;
+  skel->start  = ops->start;
+  skel->done   = ops->done;
+  skel->tune   = ops->tune;
   //TAILQ_INIT(&skel->muxes);
 
   return skel;

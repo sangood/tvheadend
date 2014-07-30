@@ -38,8 +38,6 @@ void      epggrab_module_ch_rem  ( void *m, struct channel *ch );
 void      epggrab_module_ch_mod  ( void *m, struct channel *ch );
 void      epggrab_module_ch_save ( void *m, epggrab_channel_t *ec );
 
-int       epggrab_module_enable_socket ( void *m, uint8_t e );
-
 void      epggrab_module_parse ( void *m, htsmsg_t *data );
 
 void      epggrab_module_channels_load ( epggrab_module_t *m );
@@ -85,13 +83,18 @@ epggrab_module_ext_t *epggrab_module_ext_create
  * OTA module routines
  * *************************************************************************/
 
+typedef struct epggrab_ota_module_ops {
+    int (*start)   (epggrab_ota_map_t *map, struct mpegts_mux *mm);
+    int  (*enable) (void *m, uint8_t e );
+    void (*done)   (void *m);
+    int  (*tune)   (epggrab_ota_map_t *map, epggrab_ota_mux_t *om,
+                    struct mpegts_mux *mm);
+} epggrab_ota_module_ops_t;
+
 epggrab_module_ota_t *epggrab_module_ota_create
   ( epggrab_module_ota_t *skel,
     const char *id, const char *name, int priority,
-    void (*start) (epggrab_module_ota_t*m,
-                   struct mpegts_mux *mm),
-    int (*enable) (void *m, uint8_t e ),
-    void (*done) (epggrab_module_ota_t*m),
+    epggrab_ota_module_ops_t *ops,
     epggrab_channel_tree_t *channels );
 
 /* **************************************************************************
@@ -131,8 +134,8 @@ void epggrab_ota_destroy_by_dm     ( struct dvb_mux *dm );
  */
 
 epggrab_ota_mux_t *epggrab_ota_register   
-  ( epggrab_module_ota_t *mod, struct mpegts_mux *mux,
-    int timeout, int interval );
+  ( epggrab_module_ota_t *mod, epggrab_ota_mux_t *ota,
+    struct mpegts_mux *mux );
 
 /*
  * State change
@@ -140,6 +143,17 @@ epggrab_ota_mux_t *epggrab_ota_register
 void epggrab_ota_complete 
   ( epggrab_module_ota_t *mod, epggrab_ota_mux_t *ota );
 
+/*
+ * Service list
+ */
+void
+epggrab_ota_service_add
+  ( epggrab_ota_map_t *map, epggrab_ota_mux_t *ota,
+    const char *uuid, int save );
+void
+epggrab_ota_service_del
+  ( epggrab_ota_map_t *map, epggrab_ota_mux_t *ota,
+    epggrab_ota_svc_link_t *svcl, int save );
 
 /* **************************************************************************
  * Miscellaneous
@@ -159,6 +173,7 @@ size_t freesat_huffman_decode
 
 /* EIT module */
 void eit_init    ( void );
+void eit_done    ( void );
 void eit_load    ( void );
 
 /* OpenTV module */

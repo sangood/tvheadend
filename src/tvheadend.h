@@ -44,6 +44,8 @@
 
 #include "redblack.h"
 
+#define ERRNO_AGAIN(e) ((e) == EAGAIN || (e) == EINTR || (e) == EWOULDBLOCK)
+
 typedef struct {
   const char     *name;
   const uint32_t *enabled;
@@ -220,13 +222,14 @@ typedef enum {
   SCT_MP4A,
   SCT_VP8,
   SCT_VORBIS,
-  SCT_LAST = SCT_VORBIS
+  SCT_HEVC,
+  SCT_LAST = SCT_HEVC
 } streaming_component_type_t;
 
 #define SCT_MASK(t) (1 << (t))
 
 #define SCT_ISVIDEO(t) ((t) == SCT_MPEG2VIDEO || (t) == SCT_H264 ||	\
-			(t) == SCT_VP8)
+			(t) == SCT_VP8 || (t) == SCT_HEVC)
 
 #define SCT_ISAUDIO(t) ((t) == SCT_MPEG2AUDIO || (t) == SCT_AC3 || \
                         (t) == SCT_AAC  || (t) == SCT_MP4A ||	   \
@@ -573,9 +576,9 @@ void doexit(int x);
 int tvhthread_create0
   (pthread_t *thread, const pthread_attr_t *attr,
    void *(*start_routine) (void *), void *arg,
-   const char *name, int detach);
+   const char *name);
 
-#define tvhthread_create(a, b, c, d, e)  tvhthread_create0(a, b, c, d, #c, e)
+#define tvhthread_create(a, b, c, d)  tvhthread_create0(a, b, c, d, #c)
 
 int tvh_open(const char *pathname, int flags, mode_t mode);
 

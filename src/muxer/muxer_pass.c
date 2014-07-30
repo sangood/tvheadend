@@ -136,6 +136,10 @@ pass_muxer_build_pmt(const streaming_start_t *ss, uint8_t *buf0, int maxlen,
       c = 0x1b;
       break;
 
+    case SCT_HEVC:
+      c = 0x24;
+      break;
+
     case SCT_AC3:
       c = 0x81;
       break;
@@ -401,8 +405,12 @@ pass_muxer_write(muxer_t *m, const void *data, size_t size)
     pm->m_errors++;
   } else if(tvh_write(pm->pm_fd, data, size)) {
     pm->pm_error = errno;
-    tvhlog(LOG_ERR, "pass", "%s: Write failed -- %s", pm->pm_filename, 
-	   strerror(errno));
+    if (!MC_IS_EOS_ERROR(errno))
+      tvhlog(LOG_ERR, "pass", "%s: Write failed -- %s", pm->pm_filename,
+	     strerror(errno));
+    else
+      /* this is an end-of-streaming notification */
+      m->m_eos = 1;
     m->m_errors++;
     muxer_cache_update(m, pm->pm_fd, pm->pm_off, 0);
     pm->pm_off = lseek(pm->pm_fd, 0, SEEK_CUR);
@@ -523,7 +531,7 @@ pass_muxer_close(muxer_t *m)
 
   if(pm->pm_seekable && close(pm->pm_fd)) {
     pm->pm_error = errno;
-    tvhlog(LOG_ERR, "pass", "%s: Unable to create file, open failed -- %s",
+    tvhlog(LOG_ERR, "pass", "%s: Unable to close file, close failed -- %s",
 	   pm->pm_filename, strerror(errno));
     pm->m_errors++;
     return -1;
